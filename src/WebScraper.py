@@ -377,18 +377,25 @@ class WebScraper:
         return text
 
     def simplify_text(self, text):
-        """Simplify text using LLMLingua if available."""
-        if not hasattr(self, '_lingua') and LLMLingua is not None:
-            self._lingua = LLMLingua()
+        """Simplify text using LLMLingua or the lightweight alternative."""
+        try:
+            if self.llm_lingua:
+                # First try compress_prompt (standard LLMLingua API)
+                if hasattr(self.llm_lingua, 'compress_prompt'):
+                    compressed = self.llm_lingua.compress_prompt(text)
+                    return compressed.get('compressed_prompt', text)
+                # Fall back to compress (may be used in some versions)
+                elif hasattr(self.llm_lingua, 'compress'):
+                    compressed = self.llm_lingua.compress(text)
+                    return compressed.get('compressed_prompt', text)
+                else:
+                    print("Error applying text simplification: LLM model lacks required methods")
+                    return text
+        except Exception as e:
+            print(f"Error applying text simplification: {e}")
+            return text
         
-        if hasattr(self, '_lingua'):
-            try:
-                compressed = self._lingua.compress_prompt(text)
-                return compressed.get('compressed_prompt', text)
-            except Exception as e:
-                print(f"Text simplification failed: {e}")
-        
-        return text  # Return original text if simplification isn't available
+        return text
     
     def extract_links(self, soup: BeautifulSoup, parent_url: str) -> List[str]:
         """Extract all links from the page and normalize them."""

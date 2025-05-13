@@ -95,6 +95,11 @@ def download_and_cache_models(verbose: bool = True, force_cpu: bool = True,
                     except Exception as e:
                         print(f"Summarization error: {e}")
                         return {"compressed_prompt": text}
+                
+                # Add the compress method to match the API expected by WebScraper
+                def compress(self, text):
+                    """Alias for compress_prompt to ensure compatibility"""
+                    return self.compress_prompt(text)
             
             models["llm_lingua"] = LightweightTextSummarizer(tokenizer, summarizer)
         else:
@@ -104,19 +109,13 @@ def download_and_cache_models(verbose: bool = True, force_cpu: bool = True,
                 print("Initializing LLMLingua...")
             llm_lingua = LLMLingua(device_map="cpu")  # Force CPU usage
             models["llm_lingua"] = llm_lingua
-    except ImportError:
-        try:
-            from llmlingua import LLMLingua  # type: ignore
-            if verbose:
-                print("Initializing LLMLingua...")
-            llm_lingua = LLMLingua(device_map="cpu")  # Force CPU usage
-            models["llm_lingua"] = llm_lingua
-        except ImportError:
-            if verbose:
-                print("Warning: LLMLingua package not found or incompatible. Text simplification will be disabled.")
+    except ImportError as e:
+        if verbose:
+            print(f"Warning: Text simplification module not found: {e}")
+            print("Text simplification will be disabled")
     except Exception as e:
         if verbose:
-            print(f"Error initializing LLMLingua: {e}")
+            print(f"Error initializing text simplification: {e}")
     
     if verbose:
         print("All models downloaded and cached successfully!")
