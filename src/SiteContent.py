@@ -14,12 +14,15 @@ class SiteContent:
     
     def add_html_page(self, page):
         self.HTMLPages.append(page)
+        print(f"Added HTML page: {page.url} (total: {len(self.HTMLPages)})")
         
     def add_text_page(self, page):
         self.TextPages.append(page)
+        print(f"Added text page: {page.url} (total: {len(self.TextPages)})")
         
     def add_media(self, media):
         self.MediaContentList.append(media)
+        print(f"Added media content: {media.url} (total: {len(self.MediaContentList)})")
         
     def to_dict(self):
         """Convert the object to a dictionary for JSON serialization."""

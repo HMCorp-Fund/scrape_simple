@@ -171,9 +171,13 @@ class WebScraper:
                 if self.should_process_media(abs_url) and abs_url not in self.media_urls:
                     self.media_urls.add(abs_url)
                     description = self.get_media_description(abs_url)
-                    self.site_content.MediaContentList.append(
-                        MediaContent(Url=abs_url, Description=description)
+                    media_content = MediaContent(
+                        url=abs_url,
+                        media_type="image",
+                        description=description,
+                        parent_url=parent_url
                     )
+                    self.site_content.add_media(media_content)
         
         # Process video, audio, and other media
         media_tags = soup.find_all(['video', 'audio', 'source', 'iframe'])
@@ -183,10 +187,15 @@ class WebScraper:
                 abs_url = urljoin(parent_url, src)
                 if self.should_process_media(abs_url) and abs_url not in self.media_urls:
                     self.media_urls.add(abs_url)
+                    media_type = tag.name
                     description = self.get_media_description(abs_url)
-                    self.site_content.MediaContentList.append(
-                        MediaContent(Url=abs_url, Description=description)
+                    media_content = MediaContent(
+                        url=abs_url,
+                        media_type=media_type,
+                        description=description,
+                        parent_url=parent_url
                     )
+                    self.site_content.add_media(media_content)
     
     def crawl(self, url, parent_url="", depth=0):
         """Crawl a URL to given depth and collect content."""
@@ -231,7 +240,7 @@ class WebScraper:
                 self.site_content.add_text_page(text_page)
             
             # Extract and process media content
-            self.process_media(soup, url)
+            self.extract_media(soup, url)  # Changed from process_media to extract_media
             
             # Follow links if we haven't reached max depth
             if depth < self.max_depth:
