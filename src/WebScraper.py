@@ -188,64 +188,58 @@ class WebScraper:
                         MediaContent(Url=abs_url, Description=description)
                     )
     
-    def crawl(self, url: str, parent_url: str, depth: int):
-        """Recursively crawl the website up to the specified depth."""
+    def crawl(self, url, parent_url="", depth=0):
+        """Crawl a URL to given depth and collect content."""
         if depth > self.max_depth or url in self.visited_urls:
             return
-            
+        
         self.visited_urls.add(url)
         print(f"Crawling ({depth}/{self.max_depth}): {url}")
         
         try:
-            response = requests.get(url, timeout=10)
-            if response.status_code != 200:
-                print(f"Failed to retrieve {url}: Status code {response.status_code}")
-                return
-                
-            content_type = response.headers.get('Content-Type', '').lower()
-            if 'text/html' not in content_type:
-                print(f"Skipping non-HTML content: {url}")
-                return
-                
-            html_content = response.text
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
             
-            # Store HTML page
-            self.site_content.HTMLPages.append(
-                HTMLPage(
-                    RootUrl=self.root_url,
-                    ParentUrl=parent_url,
-                    Url=url,
-                    DepthLevel=depth,
-                    PageHTMLCode=html_content
-                )
+            # Process HTML content
+            soup = BeautifulSoup(response.text, 'html.parser')
+            title = soup.title.string if soup.title else ""
+            
+            # Create HTMLPage object with correct parameter names
+            html_page = HTMLPage(
+                url=url,
+                title=title,
+                content=response.text,
+                links=self.extract_links(soup, url),
+                parent_url=parent_url
             )
+            self.site_content.add_html_page(html_page)
             
-            # Parse HTML
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Extract and store text
+            # Extract text content
             text_content = self.extract_text(soup)
-            self.site_content.TextPages.append(
-                TextPage(
-                    RootUrl=self.root_url,
-                    ParentUrl=parent_url,
-                    Url=url,
-                    DepthLevel=depth,
-                    PageText=text_content
-                )
-            )
-            
-            # Extract media content
-            self.extract_media(soup, url)
-            
-            # Extract links and continue crawling
-            links = self.extract_links(soup, url)
-            for link in links:
-                if link not in self.visited_urls:
-                    # Add a small delay to be nice to the server
-                    time.sleep(1)
-                    self.crawl(link, url, depth + 1)
+            if text_content:
+                simplified_content = ""
+                if self.simplify and hasattr(self, 'llm_lingua') and self.llm_lingua:
+                    simplified_content = self.simplify_text(text_content)
                     
+                text_page = TextPage(
+                    url=url,
+                    title=title,
+                    content=text_content,
+                    simplified_content=simplified_content,
+                    parent_url=parent_url
+                )
+                self.site_content.add_text_page(text_page)
+            
+            # Extract and process media content
+            self.process_media(soup, url)
+            
+            # Follow links if we haven't reached max depth
+            if depth < self.max_depth:
+                for link in html_page.links:
+                    if link not in self.visited_urls:
+                        time.sleep(1)  # Be nice to the server
+                        self.crawl(link, url, depth + 1)
+                        
         except Exception as e:
             print(f"Error crawling {url}: {e}")
     
