@@ -1,0 +1,2 @@
+[console_scripts]
+scrape-simple = scrape_simple.cli:main
