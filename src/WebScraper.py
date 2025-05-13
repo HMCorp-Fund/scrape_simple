@@ -199,9 +199,11 @@ class WebScraper:
     
     def crawl(self, url, parent_url="", depth=0):
         """Crawl a URL to given depth and collect content."""
+        # Only check if we've visited this URL in *this* run
         if depth > self.max_depth or url in self.visited_urls:
             return
         
+        # Mark this URL as visited in this run
         self.visited_urls.add(url)
         print(f"Crawling ({depth}/{self.max_depth}): {url}")
         
@@ -213,7 +215,7 @@ class WebScraper:
             soup = BeautifulSoup(response.text, 'html.parser')
             title = soup.title.string if soup.title else ""
             
-            # Create HTMLPage object with correct parameter names
+            # Create HTMLPage object
             html_page = HTMLPage(
                 url=url,
                 title=title,
@@ -240,15 +242,15 @@ class WebScraper:
                 self.site_content.add_text_page(text_page)
             
             # Extract and process media content
-            self.extract_media(soup, url)  # Changed from process_media to extract_media
+            self.extract_media(soup, url)
             
             # Follow links if we haven't reached max depth
             if depth < self.max_depth:
                 for link in html_page.links:
-                    if link not in self.visited_urls:
+                    if link not in self.visited_urls:  # Only check against current run's visited URLs
                         time.sleep(1)  # Be nice to the server
                         self.crawl(link, url, depth + 1)
-                        
+        
         except Exception as e:
             print(f"Error crawling {url}: {e}")
     

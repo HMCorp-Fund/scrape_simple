@@ -39,19 +39,9 @@ def main():
     parser.add_argument('--force-cpu', action='store_true', help='Force using CPU for models even if GPU is available')
     parser.add_argument('--output', '-o', default='output.json', help='Output JSON file (default: output.json)')
     parser.add_argument('--history-file', default='.scrape_history', 
-                        help='File to store previously scraped URLs (default: .scrape_history)')
+                        help='File to store visited URLs for this run (default: .scrape_history)')
     
     args = parser.parse_args()
-    
-    # Load previously visited URLs if history file exists
-    visited_urls = set()
-    if os.path.exists(args.history_file):
-        try:
-            with open(args.history_file, 'r') as f:
-                visited_urls = set(line.strip() for line in f.readlines())
-            print(f"Loaded {len(visited_urls)} previously visited URLs from {args.history_file}")
-        except Exception as e:
-            print(f"Error loading URL history: {e}")
     
     # Preload all required models
     preloaded_models = None
@@ -65,14 +55,13 @@ def main():
     
     print(f"Starting to scrape {args.url} with depth {args.depth}")
     try:
-        # Create WebScraper with previously visited URLs
+        # Create WebScraper (don't load history file)
         scraper = WebScraper(args.url, args.depth, args.simplify, args.use_existing_tor, preloaded_models)
-        scraper.visited_urls = visited_urls.copy()  # Start with previously visited URLs
         
         # Start scraping
         site_content = scraper.start()
         
-        # Save newly visited URLs to history file
+        # Save visited URLs to history file
         try:
             with open(args.history_file, 'w') as f:
                 for url in scraper.visited_urls:
