@@ -5,13 +5,7 @@ import argparse
 import sys
 import json
 import os
-from src import WebScraper
-from src import SiteContent
-
-def scrape_site(url: str, depth: int, use_existing_tor: bool) -> SiteContent:
-    """Main function to scrape a site and return SiteContent."""
-    scraper = WebScraper(url, depth, False, use_existing_tor, None)
-    return scraper.start()
+from .src import WebScraper, SiteContent
 
 def save_to_json(site_content, output_file):
     """Save the site content to a JSON file."""
