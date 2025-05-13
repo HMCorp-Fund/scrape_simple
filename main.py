@@ -4,6 +4,8 @@
 import argparse
 import time
 import sys
+import json
+import os
 from src import WebScraper
 from src import SiteContent
 from src.utils import download_and_cache_models
@@ -12,6 +14,19 @@ def scrape_site(url: str, depth: int, simplify: bool, use_existing_tor: bool, pr
     """Main function to scrape a site and return SiteContent."""
     scraper = WebScraper(url, depth, simplify, use_existing_tor, preloaded_models)
     return scraper.start()
+
+def save_to_json(site_content, output_file):
+    """Save the site content to a JSON file."""
+    data = {
+        "html_pages": [page.to_dict() for page in site_content.HTMLPages],
+        "text_pages": [page.to_dict() for page in site_content.TextPages],
+        "media_content": [media.to_dict() for media in site_content.MediaContentList]
+    }
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    
+    print(f"Results saved to {output_file}")
 
 def main():
     """Command line entry point."""
@@ -22,8 +37,21 @@ def main():
     parser.add_argument('--use-existing-tor', '-t', action='store_true', help='Use existing Tor instance if available')
     parser.add_argument('--no-preload', action='store_true', help='Skip preloading models (not recommended)')
     parser.add_argument('--force-cpu', action='store_true', help='Force using CPU for models even if GPU is available')
+    parser.add_argument('--output', '-o', default='output.json', help='Output JSON file (default: output.json)')
+    parser.add_argument('--history-file', default='.scrape_history', 
+                        help='File to store previously scraped URLs (default: .scrape_history)')
     
     args = parser.parse_args()
+    
+    # Load previously visited URLs if history file exists
+    visited_urls = set()
+    if os.path.exists(args.history_file):
+        try:
+            with open(args.history_file, 'r') as f:
+                visited_urls = set(line.strip() for line in f.readlines())
+            print(f"Loaded {len(visited_urls)} previously visited URLs from {args.history_file}")
+        except Exception as e:
+            print(f"Error loading URL history: {e}")
     
     # Preload all required models
     preloaded_models = None
@@ -37,13 +65,30 @@ def main():
     
     print(f"Starting to scrape {args.url} with depth {args.depth}")
     try:
-        site_content = scrape_site(args.url, args.depth, args.simplify, args.use_existing_tor, preloaded_models)
+        # Create WebScraper with previously visited URLs
+        scraper = WebScraper(args.url, args.depth, args.simplify, args.use_existing_tor, preloaded_models)
+        scraper.visited_urls = visited_urls.copy()  # Start with previously visited URLs
+        
+        # Start scraping
+        site_content = scraper.start()
+        
+        # Save newly visited URLs to history file
+        try:
+            with open(args.history_file, 'w') as f:
+                for url in scraper.visited_urls:
+                    f.write(f"{url}\n")
+            print(f"Saved {len(scraper.visited_urls)} visited URLs to {args.history_file}")
+        except Exception as e:
+            print(f"Error saving URL history: {e}")
         
         # Print summary of results
         print("\n--- Scraping Complete ---")
         print(f"HTML Pages: {len(site_content.HTMLPages)}")
         print(f"Text Pages: {len(site_content.TextPages)}")
         print(f"Media Content: {len(site_content.MediaContentList)}")
+        
+        # Save results to JSON
+        save_to_json(site_content, args.output)
         
         return site_content
     except OSError as e:
