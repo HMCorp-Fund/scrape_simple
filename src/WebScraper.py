@@ -47,25 +47,49 @@ class WebScraper:
             # Initialize LLMLingua if simplification is enabled
             if self.simplify:
                 try:
-                    from llmlingua import PromptCompressor as LLMLingua  # type: ignore
-                    print("Initializing LLMLingua...")
-                    self.llm_lingua = LLMLingua()
-                except ImportError:
+                    import torch # type: ignore
+                    # Check for GPU availability and set device
+                    device = "cpu"  # Default to CPU
                     try:
-                        from llmlingua import LLMLingua  # type: ignore
+                        if torch.cuda.is_available():
+                            device = "cuda"
+                        else:
+                            print("No GPU available, using CPU for LLMLingua")
+                    except:
+                        print("Could not check for CUDA, using CPU for LLMLingua")
+                        
+                    try:
+                        from llmlingua import PromptCompressor as LLMLingua  # type: ignore
                         print("Initializing LLMLingua...")
-                        self.llm_lingua = LLMLingua()
+                        self.llm_lingua = LLMLingua(device_map=device)
                     except ImportError:
-                        print("Warning: LLMLingua package not found or incompatible. Text simplification will be disabled.")
-                        self.llm_lingua = None
-            
+                        try:
+                            from llmlingua import LLMLingua  # type: ignore
+                            print("Initializing LLMLingua...")
+                            self.llm_lingua = LLMLingua(device_map=device)
+                        except ImportError:
+                            print("Warning: LLMLingua package not found or incompatible. Text simplification will be disabled.")
+                            self.llm_lingua = None
+                except Exception as e:
+                    print(f"Error initializing LLMLingua: {e}")
+                    print("Text simplification will be disabled.")
+                    self.llm_lingua = None
+
             # Initialize image captioning model
             print("Loading image captioning model...")
-            self.image_processor = transformers.AutoImageProcessor.from_pretrained(
-                "Salesforce/blip-image-captioning-base", 
-                use_fast=True
-            )
-            self.image_model = transformers.BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+            try:
+                self.image_processor = transformers.AutoImageProcessor.from_pretrained(
+                    "Salesforce/blip-image-captioning-base", 
+                    use_fast=True
+                )
+                self.image_model = transformers.BlipForConditionalGeneration.from_pretrained(
+                    "Salesforce/blip-image-captioning-base", 
+                    device_map="cpu"  # Force CPU usage
+                )
+            except Exception as e:
+                print(f"Error initializing image model: {e}")
+                self.image_processor = None
+                self.image_model = None
         
     def is_same_domain(self, url: str) -> bool:
         """Check if URL belongs to the same domain as root_url."""

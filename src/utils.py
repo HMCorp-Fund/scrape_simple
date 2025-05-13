@@ -3,7 +3,7 @@ import transformers
 from typing import Dict, Any, Optional
 import warnings
 
-def download_and_cache_models(verbose: bool = True, force_cpu: bool = False) -> Dict[str, Any]:
+def download_and_cache_models(verbose: bool = True, force_cpu: bool = True) -> Dict[str, Any]:
     """
     Downloads and caches all required models for the scraper.
     
@@ -31,7 +31,7 @@ def download_and_cache_models(verbose: bool = True, force_cpu: bool = False) -> 
             import torch # type: ignore
             device = "cuda" if torch.cuda.is_available() else "cpu"
             if device == "cpu" and verbose:
-                print("No GPU detected, using CPU for models (this will be slower)")
+                print("No GPU detected, using CPU for models")
         except ImportError:
             device = "cpu"
             if verbose:
@@ -42,42 +42,41 @@ def download_and_cache_models(verbose: bool = True, force_cpu: bool = False) -> 
         print("Loading image captioning model...")
     
     try:
-        # Try to import torchvision
-        import torchvision # type: ignore
-        has_torchvision = True
-    except ImportError:
-        has_torchvision = False
-        warnings.warn("torchvision not found. Install with: pip install torchvision")
-    
-    image_processor = transformers.AutoImageProcessor.from_pretrained(
-        "Salesforce/blip-image-captioning-base", 
-        use_fast=has_torchvision
-    )
-    image_model = transformers.BlipForConditionalGeneration.from_pretrained(
-        "Salesforce/blip-image-captioning-base",
-        device_map=device
-    )
-    
-    models["image_processor"] = image_processor
-    models["image_model"] = image_model
+        image_processor = transformers.AutoImageProcessor.from_pretrained(
+            "Salesforce/blip-image-captioning-base", 
+            use_fast=True
+        )
+        image_model = transformers.BlipForConditionalGeneration.from_pretrained(
+            "Salesforce/blip-image-captioning-base",
+            device_map=device
+        )
+        
+        models["image_processor"] = image_processor
+        models["image_model"] = image_model
+    except Exception as e:
+        if verbose:
+            print(f"Error loading image model: {e}")
     
     # Check for LLMLingua
     try:
         from llmlingua import PromptCompressor as LLMLingua  # type: ignore
         if verbose:
             print("Initializing LLMLingua...")
-        llm_lingua = LLMLingua()
+        llm_lingua = LLMLingua(device_map="cpu")  # Force CPU usage
         models["llm_lingua"] = llm_lingua
     except ImportError:
         try:
             from llmlingua import LLMLingua  # type: ignore
             if verbose:
                 print("Initializing LLMLingua...")
-            llm_lingua = LLMLingua()
+            llm_lingua = LLMLingua(device_map="cpu")  # Force CPU usage
             models["llm_lingua"] = llm_lingua
         except ImportError:
             if verbose:
                 print("Warning: LLMLingua package not found or incompatible. Text simplification will be disabled.")
+    except Exception as e:
+        if verbose:
+            print(f"Error initializing LLMLingua: {e}")
     
     if verbose:
         print("All models downloaded and cached successfully!")
