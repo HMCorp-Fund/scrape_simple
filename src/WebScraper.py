@@ -360,16 +360,38 @@ class WebScraper:
         for script_or_style in soup(['script', 'style', 'header', 'footer', 'nav']):
             script_or_style.extract()
             
-        # Get text and clean it up
-        text = soup.get_text()
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = '\n'.join(chunk for chunk in chunks if chunk)
-        
+        # Get text and clean it up - using unicode handling
+        try:
+            # First try with explicit encoding
+            text = soup.get_text()
+            
+            # Additional handling for non-ASCII text
+            if any(ord(c) > 127 for c in text):
+                # Clean up and normalize unicode
+                import unicodedata
+                text = unicodedata.normalize('NFKC', text)
+                
+            # Format the text
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = '\n'.join(chunk for chunk in chunks if chunk)
+            
+            # Special handling for Cyrillic and other non-Latin text
+            if not text or len(text) < 10:
+                # Try an alternative method for text extraction
+                paragraphs = []
+                for p in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div']):
+                    if p.string and p.string.strip():
+                        paragraphs.append(p.string.strip())
+                if paragraphs:
+                    text = '\n'.join(paragraphs)
+        except Exception as e:
+            print(f"Error during text extraction: {e}")
+            text = ""
+            
         # Apply simplification if enabled
         if self.simplify and hasattr(self, 'llm_lingua') and self.llm_lingua and text:
             try:
-                # Use the simplify_text method which properly handles the dict return value
                 return self.simplify_text(text)
             except Exception as e:
                 print(f"Error applying text simplification: {e}")
@@ -414,32 +436,57 @@ class WebScraper:
     
     def extract_media(self, soup: BeautifulSoup, parent_url: str):
         """Extract media content URLs from the page with improved descriptions."""
-        # Process images
-        for img in soup.find_all('img', src=True):
-            src = img.get('src', '')
-            if src:
-                abs_url = urljoin(parent_url, src)
-                if self.should_process_media(abs_url) and abs_url not in self.media_urls:
-                    self.media_urls.add(abs_url)
-                    # Pass the img element to get alt tags and context
-                    description = self.get_media_description(abs_url, img_element=img, parent_soup=soup)
-                    media_content = MediaContent(
-                        url=abs_url,
-                        media_type="image",
-                        description=description,
-                        parent_url=parent_url
-                    )
-                    self.site_content.add_media(media_content)
+        # Process standard images
+        for img in soup.find_all('img'):
+            # Check all possible image attributes
+            src_attrs = ['src', 'data-src', 'data-original', 'data-lazy-src', 'data-srcset']
+            
+            for attr in src_attrs:
+                if img.get(attr):
+                    src = img.get(attr)
+                    if src:
+                        abs_url = urljoin(parent_url, src)
+                        if self.should_process_media(abs_url) and abs_url not in self.media_urls:
+                            self.media_urls.add(abs_url)
+                            description = self.get_media_description(abs_url, img_element=img, parent_soup=soup)
+                            media_content = MediaContent(
+                                url=abs_url,
+                                media_type="image",
+                                description=description,
+                                parent_url=parent_url
+                            )
+                            self.site_content.add_media(media_content)
+                            break  # Found a valid source attribute, no need to check others
+        
+        # Process picture elements (common in responsive designs)
+        for picture in soup.find_all('picture'):
+            sources = picture.find_all('source')
+            for source in sources:
+                if source.get('srcset'):
+                    srcset = source.get('srcset')
+                    # Handle comma-separated srcset
+                    for src_part in srcset.split(','):
+                        src = src_part.strip().split(' ')[0]  # Get URL part before width descriptor
+                        abs_url = urljoin(parent_url, src)
+                        if self.should_process_media(abs_url) and abs_url not in self.media_urls:
+                            self.media_urls.add(abs_url)
+                            description = self.get_media_description(abs_url, parent_soup=soup)
+                            media_content = MediaContent(
+                                url=abs_url,
+                                media_type="image",
+                                description=description,
+                                parent_url=parent_url
+                            )
+                            self.site_content.add_media(media_content)
         
         # Process video, audio, and other media
         for tag_name in ['video', 'audio', 'source', 'iframe']:
             for tag in soup.find_all(tag_name):
-                src = tag.get('src', '')
+                src = tag.get('src')
                 if src:
                     abs_url = urljoin(parent_url, src)
                     if self.should_process_media(abs_url) and abs_url not in self.media_urls:
                         self.media_urls.add(abs_url)
-                        # Pass the element for context
                         description = self.get_media_description(abs_url, media_element=tag, parent_soup=soup)
                         media_content = MediaContent(
                             url=abs_url,
@@ -448,6 +495,42 @@ class WebScraper:
                             parent_url=parent_url
                         )
                         self.site_content.add_media(media_content)
+        
+        # Check for images in CSS background (often contains important images)
+        elements_with_style = soup.find_all(lambda tag: tag.has_attr('style') and 'background' in tag['style'])
+        for element in elements_with_style:
+            style = element.get('style', '')
+            # Extract URL from background or background-image
+            urls = re.findall(r'url\([\'"]?(.*?)[\'"]?\)', style)
+            for url in urls:
+                abs_url = urljoin(parent_url, url)
+                if self.should_process_media(abs_url) and abs_url not in self.media_urls:
+                    self.media_urls.add(abs_url)
+                    description = self.get_media_description(abs_url, parent_soup=soup)
+                    media_content = MediaContent(
+                        url=abs_url,
+                        media_type="image",
+                        description="Background image" + (f": {description}" if description else ""),
+                        parent_url=parent_url
+                    )
+                    self.site_content.add_media(media_content)
+        
+        # Check for CDN-style image URLs that follow specific patterns
+        # This is specifically for the cdn-cgi/imagedelivery pattern you mentioned
+        for link in soup.find_all('a', href=True):
+            href = link.get('href')
+            if 'cdn-cgi/imagedelivery' in href or 'images.spr.so' in href:
+                abs_url = urljoin(parent_url, href)
+                if abs_url not in self.media_urls:
+                    self.media_urls.add(abs_url)
+                    description = link.get_text() or self.get_media_description(abs_url, parent_soup=soup)
+                    media_content = MediaContent(
+                        url=abs_url,
+                        media_type="image",
+                        description=description,
+                        parent_url=parent_url
+                    )
+                    self.site_content.add_media(media_content)
     
     def crawl(self, url, parent_url="", depth=0):
         """Crawl a URL to given depth and collect content."""
@@ -465,6 +548,30 @@ class WebScraper:
             
             # Process HTML content
             soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Special handling for CDN images in raw HTML (might be in scripts or data attributes)
+            cdn_patterns = [
+                r'https?://images\.spr\.so/[^"\')\s]+',
+                r'https?://[^"\')\s]+/cdn-cgi/imagedelivery/[^"\')\s]+'
+            ]
+            
+            for pattern in cdn_patterns:
+                for match in re.finditer(pattern, response.text):
+                    img_url = match.group(0)
+                    # Clean up URL if it has trailing quotes or syntax
+                    img_url = re.sub(r'["\')]$', '', img_url)
+                    
+                    if self.should_process_media(img_url) and img_url not in self.media_urls:
+                        self.media_urls.add(img_url)
+                        description = self.get_media_description(img_url, parent_soup=soup)
+                        media_content = MediaContent(
+                            url=img_url,
+                            media_type="image",
+                            description=f"CDN Image: {description}",
+                            parent_url=url
+                        )
+                        self.site_content.add_media(media_content)
+            
             title = soup.title.string if soup.title else ""
             
             # Create HTMLPage object
