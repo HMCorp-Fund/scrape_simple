@@ -355,49 +355,83 @@ class WebScraper:
             return f"Media content (description failed: {str(e)[:100]})"
     
     def extract_text(self, soup: BeautifulSoup) -> str:
-        """Extract readable text content from BeautifulSoup object."""
-        # Remove script and style elements
-        for script_or_style in soup(['script', 'style', 'header', 'footer', 'nav']):
-            script_or_style.extract()
-            
-        # Get text and clean it up - using unicode handling
+        """Extract readable text content from BeautifulSoup object with improved non-Latin support."""
+        # Remove script, style and other non-content elements
+        for element_to_remove in soup(['script', 'style', 'meta', 'link', 'noscript', 'svg', 'path']):
+            element_to_remove.decompose()
+        
         try:
-            # First try with explicit encoding
-            text = soup.get_text()
+            # Extract text directly from meaningful elements instead of using get_text()
+            paragraphs = []
             
-            # Additional handling for non-ASCII text
-            if any(ord(c) > 127 for c in text):
-                # Clean up and normalize unicode
-                import unicodedata
-                text = unicodedata.normalize('NFKC', text)
+            # Define elements that typically contain meaningful content
+            content_elements = [
+                'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 
+                'li', 'span', 'div', 'td', 'article', 'section'
+            ]
+            
+            # Process each content-containing element
+            for elem in soup.find_all(content_elements):
+                # Skip empty elements and navigation/menu elements
+                if not elem.text.strip():
+                    continue
+                    
+                # Skip elements likely to be navigation or non-content
+                classes = elem.get('class', [])
+                if isinstance(classes, list):
+                    class_str = ' '.join(classes).lower()
+                    if any(term in class_str for term in ['nav', 'menu', 'footer', 'header', 'sidebar']):
+                        continue
                 
-            # Format the text
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = '\n'.join(chunk for chunk in chunks if chunk)
+                # Get the text and preserve unicode characters
+                text = elem.get_text(strip=True)
+                
+                # Only add non-empty paragraphs
+                if text and len(text) > 1:
+                    paragraphs.append(text)
             
-            # Special handling for Cyrillic and other non-Latin text
-            if not text or len(text) < 10:
-                # Try an alternative method for text extraction
-                paragraphs = []
-                for p in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div']):
-                    if p.string and p.string.strip():
-                        paragraphs.append(p.string.strip())
-                if paragraphs:
-                    text = '\n'.join(paragraphs)
+            # Join all paragraphs with newlines
+            full_text = '\n'.join(paragraphs)
+            
+            # Remove excessive whitespace while preserving paragraph breaks
+            full_text = re.sub(r'\s+', ' ', full_text)
+            full_text = re.sub(r'\n\s*\n', '\n\n', full_text)
+            
+            # If we failed to extract meaningful content, try a fallback method
+            if not full_text or len(full_text) < 50:
+                # Try extracting visible text from the body
+                body_text = ""
+                if soup.body:
+                    body = soup.body
+                    
+                    # Remove hidden elements
+                    for hidden in body.find_all(style=re.compile('display:\s*none|visibility:\s*hidden')):
+                        hidden.decompose()
+                    
+                    # Get text directly from the body
+                    body_text = body.get_text(separator='\n', strip=True)
+                    
+                    # Clean up the text
+                    lines = body_text.splitlines()
+                    lines = [line.strip() for line in lines if line.strip()]
+                    body_text = '\n'.join(lines)
+                    
+                    full_text = body_text
+            
+            # Apply simplification if enabled
+            if self.simplify and hasattr(self, 'llm_lingua') and self.llm_lingua and full_text:
+                try:
+                    return self.simplify_text(full_text)
+                except Exception as e:
+                    print(f"Error applying text simplification: {e}")
+                    return full_text
+                    
+            return full_text
+            
         except Exception as e:
             print(f"Error during text extraction: {e}")
-            text = ""
-            
-        # Apply simplification if enabled
-        if self.simplify and hasattr(self, 'llm_lingua') and self.llm_lingua and text:
-            try:
-                return self.simplify_text(text)
-            except Exception as e:
-                print(f"Error applying text simplification: {e}")
-                return text
-        return text
-
+            return ""
+    
     def simplify_text(self, text):
         """Simplify text using LLMLingua or the lightweight alternative."""
         try:
