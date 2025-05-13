@@ -9,6 +9,7 @@ lxml>=4.9.0
 
 # Image processing
 Pillow>=9.0.0
+torchvision>=0.15.0  # Added for fast image processor support
 
 # Machine learning models
 torch>=2.0.0
