@@ -7,17 +7,5 @@ stem>=1.8.0
 beautifulsoup4>=4.11.0
 lxml>=4.9.0
 
-# Image processing
-Pillow>=9.0.0
-torchvision>=0.15.0  # Added for fast image processor support
-
-# Machine learning models
-torch>=2.0.0
-transformers>=4.25.0
-accelerate>=0.20.0  # For faster model loading
-
-# Text processing
-llmlingua>=0.1.0  # Optional: for text simplification
-
 # Additional dependencies
 tqdm>=4.66.0  # For progress bars
