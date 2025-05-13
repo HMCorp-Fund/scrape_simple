@@ -18,7 +18,7 @@ def save_to_json(site_content, output_file):
     data = {
         "html_pages": [page.to_dict() for page in site_content.HTMLPages],
         "text_pages": [page.to_dict() for page in site_content.TextPages],
-        "media_content": [] # Empty list since media extraction is removed
+        "media_content": [media.to_dict() for media in site_content.MediaContentList]
     }
     
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -35,13 +35,25 @@ def main():
     parser.add_argument('--output', '-o', default='output.json', help='Output JSON file (default: output.json)')
     parser.add_argument('--history-file', default='.scrape_history', 
                         help='File to store visited URLs for this run (default: .scrape_history)')
+    parser.add_argument('--simplify-ru', action='store_true', help='Simplify Russian text using Natasha')
+    parser.add_argument('--min-media-size', type=int, default=10240*10, 
+                        help='Minimum file size for media in bytes (default: 100KB)')
+    parser.add_argument('--ai-describe-media', action='store_true', 
+                        help='Use AI to generate descriptions for media files')
     
     args = parser.parse_args()
     
     print(f"Starting to scrape {args.url} with depth {args.depth}")
     try:
-        # Create WebScraper
-        scraper = WebScraper(args.url, args.depth, False, args.use_existing_tor, None)
+        # Create WebScraper with all options
+        scraper = WebScraper(
+            args.url, 
+            args.depth,
+            use_existing_tor=args.use_existing_tor,
+            simplify_ru=args.simplify_ru,
+            min_media_size=args.min_media_size,
+            ai_describe_media=args.ai_describe_media
+        )
         
         # Start scraping
         site_content = scraper.start()
@@ -59,7 +71,7 @@ def main():
         print("\n--- Scraping Complete ---")
         print(f"HTML Pages: {len(site_content.HTMLPages)}")
         print(f"Text Pages: {len(site_content.TextPages)}")
-        print(f"Media Content: 0")
+        print(f"Media Files: {len(site_content.MediaContentList)}")
         
         # Save results to JSON
         save_to_json(site_content, args.output)

@@ -7,5 +7,13 @@ stem>=1.8.0
 beautifulsoup4>=4.11.0
 lxml>=4.9.0
 
+# Russian text simplification (optional)
+natasha>=1.6.0
+
+# AI image captioning (optional)
+transformers>=4.25.0
+pillow>=9.0.0
+torch>=2.0.0
+
 # Additional dependencies
 tqdm>=4.66.0  # For progress bars

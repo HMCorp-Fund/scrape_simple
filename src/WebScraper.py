@@ -1,29 +1,370 @@
 import time
 import requests # type: ignore
-from urllib.parse import urlparse, urljoin
-from typing import List, Optional, Dict, Any
+from urllib.parse import urlparse, urljoin, unquote
+import os.path
+from typing import List, Optional, Dict, Any, Set
 from bs4 import BeautifulSoup # type: ignore
 from . import SiteContent
 from . import HTMLPage
 from . import TextPage
+from . import MediaContent
 from . import TorManager
 import re
+import os
+import io
 
 class WebScraper:
-    def __init__(self, root_url: str, max_depth: int, simplify: bool = False, use_existing_tor: bool = True, 
-                 preloaded_models: Optional[Dict[str, Any]] = None):
+    def __init__(self, root_url: str, max_depth: int, use_existing_tor: bool = True, 
+                 simplify_ru: bool = False, min_media_size: int = 10240,
+                 ai_describe_media: bool = False):
         self.root_url = root_url
         self.max_depth = max_depth
         self.visited_urls = set()
+        self.processed_media_urls = set()  # Track media URLs we've already processed
         self.domain = urlparse(root_url).netloc
         self.site_content = SiteContent()
         self.tor_manager = TorManager()
         self.use_existing_tor = use_existing_tor
+        self.simplify_ru = simplify_ru
+        self.min_media_size = min_media_size  # Minimum media size in bytes (default 10KB)
+        self.ai_describe_media = ai_describe_media
+        self.image_captioner = None
         
+        # Initialize Russian text simplifier if needed
+        if self.simplify_ru:
+            try:
+                from .utils import RussianTextSimplifier
+                self.ru_simplifier = RussianTextSimplifier()
+                print("Russian text simplification enabled")
+            except ImportError:
+                print("Warning: Could not initialize Russian text simplification. Make sure natasha is installed.")
+                self.ru_simplifier = None
+                self.simplify_ru = False
+        else:
+            self.ru_simplifier = None
+
+        # Initialize AI image captioner if needed
+        if self.ai_describe_media:
+            try:
+                self._initialize_image_captioner()
+                print("AI image description enabled")
+            except Exception as e:
+                print(f"Warning: Could not initialize AI image description: {e}")
+                print("AI image description will be disabled")
+                self.ai_describe_media = False
+
+    def _initialize_image_captioner(self):
+        """Initialize the image captioning model."""
+        try:
+            from transformers import BlipProcessor, BlipForConditionalGeneration
+            from PIL import Image # type: ignore
+            
+            # Store these as class attributes for use later
+            self.Image = Image
+            # Explicitly set use_fast=True to use the faster processor
+            self.processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base", use_fast=True)
+            self.model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+            self.image_captioner = True
+            print("AI image captioning model loaded successfully")
+        except Exception as e:
+            print(f"Error loading image captioning model: {e}")
+            print("Please install the required packages: pip install transformers pillow torch")
+            self.image_captioner = None
+            raise
+
+    def generate_ai_description(self, image_url: str) -> str:
+        """Generate a description of the image using AI."""
+        if not self.image_captioner:
+            return ""
+            
+        try:
+            # Download the image
+            response = requests.get(image_url, timeout=10, stream=True)
+            if response.status_code != 200:
+                return ""
+                
+            # Load as PIL image
+            image = self.Image.open(io.BytesIO(response.content))
+            
+            # Generate caption
+            inputs = self.processor(image, return_tensors="pt")
+            output = self.model.generate(**inputs, max_length=30)
+            caption = self.processor.decode(output[0], skip_special_tokens=True)
+            
+            return caption
+        except Exception as e:
+            print(f"Error generating AI description for {image_url}: {e}")
+            return ""
+
+    def _has_cyrillic(self, text):
+        """Check if text contains Cyrillic characters (for Russian detection)"""
+        return bool(re.search('[а-яА-Я]', text))
+    
     def is_same_domain(self, url: str) -> bool:
         """Check if URL belongs to the same domain as root_url."""
         parsed_url = urlparse(url)
         return parsed_url.netloc == self.domain or parsed_url.netloc == ''
+    
+    def get_media_file_size(self, url: str) -> int:
+        """Get the file size of a media URL in bytes."""
+        try:
+            # Use HEAD request to efficiently get content length
+            head = requests.head(url, timeout=10, allow_redirects=True)
+            if head.status_code == 200 and 'content-length' in head.headers:
+                return int(head.headers['content-length'])
+            
+            # If HEAD request doesn't have content-length, try a small GET request
+            get = requests.get(url, timeout=10, stream=True)
+            if get.status_code == 200 and 'content-length' in get.headers:
+                return int(get.headers['content-length'])
+                
+            return 0
+        except Exception as e:
+            print(f"Error checking size of {url}: {e}")
+            return 0
+    
+    def get_filename_from_url(self, url: str) -> str:
+        """Extract a clean filename from a URL."""
+        parsed = urlparse(url)
+        path = unquote(parsed.path)  # Handle URL encoding
+        filename = os.path.basename(path)
+        
+        # If filename is empty or just a slash, use the last path component
+        if not filename or filename == '/':
+            parts = [p for p in path.split('/') if p]
+            if parts:
+                filename = parts[-1]
+            else:
+                return "unnamed_file"
+                
+        # Strip query parameters if present
+        if '?' in filename:
+            filename = filename.split('?')[0]
+            
+        return filename
+    
+    def get_media_description(self, url: str, img_element=None, parent_soup=None) -> str:
+        """Generate a meaningful description for media content."""
+        # First try AI description if enabled (for images only)
+        if self.ai_describe_media:
+            ai_description = self.generate_ai_description(url)
+            if ai_description:
+                return ai_description
+        
+        # Try alt text for images
+        if img_element and img_element.get('alt'):
+            alt_text = img_element.get('alt').strip()
+            if alt_text and alt_text.lower() != "image" and len(alt_text) > 1:
+                return alt_text
+                
+        # Try title attribute
+        if img_element and img_element.get('title'):
+            title_text = img_element.get('title').strip()
+            if title_text:
+                return title_text
+        
+        # Try figcaption if it exists
+        if img_element and parent_soup:
+            figure = img_element.find_parent('figure')
+            if figure:
+                figcaption = figure.find('figcaption')
+                if figcaption and figcaption.text.strip():
+                    return figcaption.text.strip()
+        
+        # Use filename as fallback
+        filename = self.get_filename_from_url(url)
+        
+        # Clean up the filename
+        if filename:
+            # Remove extension
+            filename = os.path.splitext(filename)[0]
+            # Replace dashes and underscores with spaces
+            filename = filename.replace('-', ' ').replace('_', ' ')
+            # Capitalize words
+            filename = ' '.join(word.capitalize() for word in filename.split())
+            
+            if filename and len(filename) > 1:
+                return filename
+        
+        # Last resort
+        return "Media file"
+    
+    def extract_media(self, soup: BeautifulSoup, page_url: str):
+        """Extract and process media files above minimum size."""
+        # Track new media found in this page
+        media_found = 0
+        
+        # 1. Process all image tags
+        for img in soup.find_all('img'):
+            # Check all possible image attributes
+            for attr in ['src', 'data-src', 'data-original', 'data-lazy-src']:
+                if img.get(attr):
+                    img_url = urljoin(page_url, img[attr])
+                    if img_url not in self.processed_media_urls:
+                        self.processed_media_urls.add(img_url)
+                        
+                        # Check file size
+                        file_size = self.get_media_file_size(img_url)
+                        if file_size >= self.min_media_size:
+                            description = self.get_media_description(img_url, img_element=img, parent_soup=soup)
+                            
+                            # Create MediaContent object
+                            media_content = MediaContent(
+                                url=img_url,
+                                media_type="image",
+                                description=description,
+                                parent_url=page_url
+                            )
+                            
+                            self.site_content.add_media(media_content)
+                            media_found += 1
+                    break  # Found an image source, no need to check others
+            
+            # Handle srcset attribute
+            if img.get('srcset'):
+                srcset = img['srcset']
+                # Extract the highest resolution image from srcset
+                highest_res_url = None
+                highest_res = 0
+                
+                # Parse the srcset attribute
+                srcset_parts = re.findall(r'([^\s,]+)(?:\s+(\d+)w)?(?:,\s*)?', srcset)
+                for url, width in srcset_parts:
+                    if width and int(width) > highest_res:
+                        highest_res = int(width)
+                        highest_res_url = url
+                    elif not width and not highest_res_url:  # Default if no width specified
+                        highest_res_url = url
+                
+                if highest_res_url:
+                    img_url = urljoin(page_url, highest_res_url)
+                    if img_url not in self.processed_media_urls:
+                        self.processed_media_urls.add(img_url)
+                        
+                        # Check file size
+                        file_size = self.get_media_file_size(img_url)
+                        if file_size >= self.min_media_size:
+                            description = self.get_media_description(img_url, img_element=img, parent_soup=soup)
+                            
+                            # Create MediaContent object
+                            media_content = MediaContent(
+                                url=img_url,
+                                media_type="image",
+                                description=description,
+                                parent_url=page_url
+                            )
+                            
+                            self.site_content.add_media(media_content)
+                            media_found += 1
+        
+        # 2. Process video elements
+        for video in soup.find_all('video'):
+            if video.get('src'):
+                video_url = urljoin(page_url, video['src'])
+                if video_url not in self.processed_media_urls:
+                    self.processed_media_urls.add(video_url)
+                    
+                    # Check file size
+                    file_size = self.get_media_file_size(video_url)
+                    if file_size >= self.min_media_size:
+                        description = video.get('title') or video.get('alt') or self.get_filename_from_url(video_url)
+                        
+                        # Create MediaContent object
+                        media_content = MediaContent(
+                            url=video_url,
+                            media_type="video",
+                            description=description,
+                            parent_url=page_url
+                        )
+                        
+                        self.site_content.add_media(media_content)
+                        media_found += 1
+            
+            # Check source elements within video
+            for source in video.find_all('source'):
+                if source.get('src'):
+                    video_url = urljoin(page_url, source['src'])
+                    if video_url not in self.processed_media_urls:
+                        self.processed_media_urls.add(video_url)
+                        
+                        # Check file size
+                        file_size = self.get_media_file_size(video_url)
+                        if file_size >= self.min_media_size:
+                            description = source.get('title') or video.get('title') or self.get_filename_from_url(video_url)
+                            
+                            # Create MediaContent object
+                            media_content = MediaContent(
+                                url=video_url,
+                                media_type="video",
+                                description=description,
+                                parent_url=page_url
+                            )
+                            
+                            self.site_content.add_media(media_content)
+                            media_found += 1
+        
+        # 3. Look for CDN patterns in HTML
+        cdn_patterns = [
+            r'https?://images\..*?/cdn-cgi/imagedelivery/[^"\')\s]+',
+            r'https?://.*?\.cloudfront\.net/[^"\')\s]+\.(jpe?g|png|gif|svg|webp)',
+            r'https?://.*?\.amazonaws\.com/[^"\')\s]+\.(jpe?g|png|gif|svg|webp)'
+        ]
+        
+        html = str(soup)
+        for pattern in cdn_patterns:
+            for match in re.finditer(pattern, html):
+                img_url = match.group(0)
+                # Clean up URL if it has trailing quotes or syntax
+                img_url = re.sub(r'["\')\s].*$', '', img_url)
+                
+                if img_url not in self.processed_media_urls:
+                    self.processed_media_urls.add(img_url)
+                    
+                    # Check file size
+                    file_size = self.get_media_file_size(img_url)
+                    if file_size >= self.min_media_size:
+                        description = self.get_filename_from_url(img_url)
+                        
+                        # Create MediaContent object
+                        media_content = MediaContent(
+                            url=img_url,
+                            media_type="image",
+                            description=description,
+                            parent_url=page_url
+                        )
+                        
+                        self.site_content.add_media(media_content)
+                        media_found += 1
+                        
+        # 4. Check for elements with background images in style attributes
+        elements_with_bg = soup.find_all(lambda tag: tag.has_attr('style') and 
+                                        ('background' in tag['style'] or 'url(' in tag['style']))
+        for element in elements_with_bg:
+            style = element['style']
+            urls = re.findall(r'url\([\'"]?([^\'";\)]+)', style)
+            for extracted_url in urls:
+                img_url = urljoin(page_url, extracted_url)
+                if img_url not in self.processed_media_urls:
+                    self.processed_media_urls.add(img_url)
+                    
+                    # Check file size
+                    file_size = self.get_media_file_size(img_url)
+                    if file_size >= self.min_media_size:
+                        description = element.get('alt') or element.get('title') or self.get_filename_from_url(img_url)
+                        
+                        # Create MediaContent object
+                        media_content = MediaContent(
+                            url=img_url,
+                            media_type="image",
+                            description=description,
+                            parent_url=page_url
+                        )
+                        
+                        self.site_content.add_media(media_content)
+                        media_found += 1
+        
+        if media_found > 0:
+            print(f"Found {media_found} media files above minimum size on {page_url}")
     
     def extract_text(self, soup: BeautifulSoup) -> str:
         """Extract readable text content from BeautifulSoup object with improved non-Latin support."""
@@ -143,14 +484,35 @@ class WebScraper:
             )
             self.site_content.add_html_page(html_page)
             
+            # Extract media files
+            self.extract_media(soup, url)
+            
             # Extract text content
             text_content = self.extract_text(soup)
             if text_content:
+                # Apply Russian simplification if enabled
+                simplified_content = text_content
+                if self.simplify_ru and self.ru_simplifier and self._has_cyrillic(text_content):
+                    try:
+                        original_length = len(text_content)
+                        simplified_content = self.ru_simplifier.simplify_text(text_content)
+                        new_length = len(simplified_content)
+                        
+                        # Check if simplification produced reasonable results
+                        if simplified_content and new_length >= original_length * 0.5:
+                            print(f"Applied Russian text simplification for {url}")
+                        else:
+                            print(f"Russian simplification produced poor results, using original text")
+                            simplified_content = text_content
+                    except Exception as e:
+                        print(f"Error applying Russian text simplification: {e}")
+                        simplified_content = text_content
+                
                 text_page = TextPage(
                     url=url,
                     title=title,
                     content=text_content,
-                    simplified_content=text_content,  # Same as content without simplification
+                    simplified_content=simplified_content,
                     parent_url=parent_url
                 )
                 self.site_content.add_text_page(text_page)
