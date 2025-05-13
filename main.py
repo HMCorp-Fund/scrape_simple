@@ -40,6 +40,7 @@ def main():
     parser.add_argument('--output', '-o', default='output.json', help='Output JSON file (default: output.json)')
     parser.add_argument('--history-file', default='.scrape_history', 
                         help='File to store visited URLs for this run (default: .scrape_history)')
+    parser.add_argument('--lightweight', action='store_true', help='Use lightweight models for text simplification')
     
     args = parser.parse_args()
     
@@ -48,7 +49,10 @@ def main():
     if not args.no_preload:
         try:
             print("Preloading all required models...")
-            preloaded_models = download_and_cache_models(force_cpu=args.force_cpu)
+            preloaded_models = download_and_cache_models(
+                force_cpu=args.force_cpu,
+                lightweight=args.lightweight
+            )
         except Exception as e:
             print(f"Error preloading models: {e}")
             print("Continuing without preloaded models...")
