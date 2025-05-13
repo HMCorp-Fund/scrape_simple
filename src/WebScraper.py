@@ -366,11 +366,11 @@ class WebScraper:
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = '\n'.join(chunk for chunk in chunks if chunk)
         
-        # Apply LLMLingua simplification if enabled
-        if self.simplify and LLMLingua and text:
+        # Apply simplification if enabled
+        if self.simplify and hasattr(self, 'llm_lingua') and self.llm_lingua and text:
             try:
-                compressed_text = self.llm_lingua.compress(text)
-                return compressed_text
+                # Use the simplify_text method which properly handles the dict return value
+                return self.simplify_text(text)
             except Exception as e:
                 print(f"Error applying text simplification: {e}")
                 return text
