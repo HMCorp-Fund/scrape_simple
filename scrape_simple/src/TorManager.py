@@ -86,7 +86,7 @@ class TorManager:
         """Check if Tor is already running on the specified ports."""
         try:
             # Try to connect to the control port
-            controller = stem.control.Controller.from_port(port=self.control_port)
+            controller = stem.control.Controller.from_port(port=str(self.control_port))
             controller.close()
             return True
         except stem.SocketError:

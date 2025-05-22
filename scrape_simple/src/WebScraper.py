@@ -16,53 +16,44 @@ import io
 class WebScraper:
     def __init__(self, root_url: str, max_depth: int, use_existing_tor: bool = True, 
                  simplify_ru: bool = False, min_media_size: int = 10240,
-                 ai_describe_media: bool = False):
+                 ai_describe_media: bool = False, skip_media: bool = False):
         self.root_url = root_url
         self.max_depth = max_depth
         self.visited_urls = set()
-        self.processed_media_urls = set()  # Track media URLs we've already processed
+        self.processed_media_urls = set()
         self.domain = urlparse(root_url).netloc
         self.site_content = SiteContent()
         self.tor_manager = TorManager()
         self.use_existing_tor = use_existing_tor
         self.simplify_ru = simplify_ru
-        self.min_media_size = min_media_size  # Minimum media size in bytes (default 10KB)
+        self.min_media_size = min_media_size  # Minimum media size in bytes
         self.ai_describe_media = ai_describe_media
         self.image_captioner = None
+        self.skip_media = skip_media  # Flag to control media extraction
         
-        # Initialize Russian text simplifier if needed
-        if self.simplify_ru:
-            try:
-                from .utils import RussianTextSimplifier
-                self.ru_simplifier = RussianTextSimplifier()
-                print("Russian text simplification enabled")
-            except ImportError:
-                print("Warning: Could not initialize Russian text simplification. Make sure natasha is installed.")
-                self.ru_simplifier = None
-                self.simplify_ru = False
-        else:
-            self.ru_simplifier = None
-
-        # Initialize AI image captioner if needed
-        if self.ai_describe_media:
+        # Initialize AI image captioner only if needed and media extraction is enabled
+        if self.ai_describe_media and not self.skip_media:
             try:
                 self._initialize_image_captioner()
                 print("AI image description enabled")
             except Exception as e:
                 print(f"Warning: Could not initialize AI image description: {e}")
-                print("AI image description will be disabled")
                 self.ai_describe_media = False
 
     def _initialize_image_captioner(self):
         """Initialize the image captioning model."""
         try:
-            from transformers import BlipProcessor, BlipForConditionalGeneration
+            from transformers.models.blip import BlipProcessor
+            from transformers.models.blip import BlipForConditionalGeneration
             from PIL import Image # type: ignore
             
             # Store these as class attributes for use later
             self.Image = Image
             # Explicitly set use_fast=True to use the faster processor
             self.processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base", use_fast=True)
+            # If processor returns a tuple, unpack it
+            if isinstance(self.processor, tuple):
+                self.processor = self.processor[0]
             self.model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
             self.image_captioner = True
             print("AI image captioning model loaded successfully")
@@ -484,9 +475,10 @@ class WebScraper:
             )
             self.site_content.add_html_page(html_page)
             
-            # Extract media files
-            self.extract_media(soup, url)
-            
+            # Extract media files only if media extraction is not skipped
+            if not self.skip_media:
+                self.extract_media(soup, url)
+        
             # Extract text content
             text_content = self.extract_text(soup)
             if text_content:

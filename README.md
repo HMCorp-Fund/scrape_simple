@@ -45,7 +45,7 @@ scrape-simple https://example.com --depth 3 --min-media-size 20480 --simplify-ru
 ```
 
 ### Python API
-```bash
+```python
 from scrape_simple import WebScraper, SiteContent
 
 # Create scraper
@@ -67,6 +67,14 @@ for page in site_content.TextPages:
 
 for media in site_content.MediaContentList:
     print(f"Media: {media.url}, Type: {media.media_type}, Description: {media.description}")
+
+# Create scraper with media extraction disabled
+scraper = WebScraper(
+    root_url="https://example.com",
+    max_depth=2,
+    use_existing_tor=True,
+    skip_media=True  # Disable media extraction
+)
 ```
 
 ## Requirements
@@ -85,3 +93,4 @@ for media in site_content.MediaContentList:
 | `--simplify-ru` | Simplify Russian text using Natasha |
 | `--min-media-size` | Minimum file size for media in bytes (default: 100KB) |
 | `--ai-describe-media` | Use AI to generate descriptions for media files |
+| `--skip-media` | Disable media extraction completely |

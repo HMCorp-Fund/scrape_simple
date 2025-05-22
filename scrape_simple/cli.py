@@ -34,6 +34,8 @@ def main():
                         help='Minimum file size for media in bytes (default: 100KB)')
     parser.add_argument('--ai-describe-media', action='store_true', 
                         help='Use AI to generate descriptions for media files')
+    parser.add_argument('--skip-media', action='store_true',
+                        help='Skip extraction of media files completely')
     
     args = parser.parse_args()
     
@@ -46,7 +48,8 @@ def main():
             use_existing_tor=args.use_existing_tor,
             simplify_ru=args.simplify_ru,
             min_media_size=args.min_media_size,
-            ai_describe_media=args.ai_describe_media
+            ai_describe_media=args.ai_describe_media,
+            skip_media=args.skip_media
         )
         
         # Start scraping
