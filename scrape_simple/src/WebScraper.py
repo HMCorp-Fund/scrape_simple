@@ -26,6 +26,19 @@ class WebScraper:
         self.tor_manager = TorManager()
         self.use_existing_tor = use_existing_tor
         self.simplify_ru = simplify_ru
+        self.ru_simplifier = None  # Initialize to None by default
+        
+        # Initialize Russian text simplifier if needed
+        if self.simplify_ru:
+            try:
+                from .utils import RussianTextSimplifier
+                self.ru_simplifier = RussianTextSimplifier()
+                print("Russian text simplification enabled")
+            except Exception as e:
+                print(f"Warning: Could not initialize Russian text simplification: {e}")
+                print("Russian text simplification will be disabled")
+                self.simplify_ru = False
+        
         self.min_media_size = min_media_size  # Minimum media size in bytes
         self.ai_describe_media = ai_describe_media
         self.image_captioner = None
@@ -482,9 +495,9 @@ class WebScraper:
             # Extract text content
             text_content = self.extract_text(soup)
             if text_content:
-                # Apply Russian simplification if enabled
+                # Apply Russian simplification if enabled AND the simplifier exists
                 simplified_content = text_content
-                if self.simplify_ru and self.ru_simplifier and self._has_cyrillic(text_content):
+                if self.simplify_ru and hasattr(self, 'ru_simplifier') and self.ru_simplifier and self._has_cyrillic(text_content):
                     try:
                         original_length = len(text_content)
                         simplified_content = self.ru_simplifier.simplify_text(text_content)
