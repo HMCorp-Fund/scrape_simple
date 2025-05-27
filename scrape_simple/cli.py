@@ -36,6 +36,8 @@ def main():
                         help='Use AI to generate descriptions for media files')
     parser.add_argument('--skip-media', action='store_true',
                         help='Skip extraction of media files completely')
+    parser.add_argument('--max-retries', type=int, default=3,
+                        help='Maximum number of retries for failed requests (default: 3)')
     
     args = parser.parse_args()
     
@@ -49,7 +51,8 @@ def main():
             simplify_ru=args.simplify_ru,
             min_media_size=args.min_media_size,
             ai_describe_media=args.ai_describe_media,
-            skip_media=args.skip_media
+            skip_media=args.skip_media,
+            max_retries=args.max_retries
         )
         
         # Start scraping

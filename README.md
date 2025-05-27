@@ -94,3 +94,13 @@ scraper = WebScraper(
 | `--min-media-size` | Minimum file size for media in bytes (default: 100KB) |
 | `--ai-describe-media` | Use AI to generate descriptions for media files |
 | `--skip-media` | Disable media extraction completely |
+| `--max-retries` | Maximum number of retries for failed requests (default: 3) |
+
+## Anti-Bot Protection Handling
+
+Scrape Simple includes features to bypass common anti-bot protections:
+
+- Browser-like request headers
+- Random delays between requests
+- Tor IP rotation for 403/429 errors
+- Configurable retry mechanism

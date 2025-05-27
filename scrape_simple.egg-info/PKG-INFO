@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: scrape_simple
-Version: 0.1.1
+Version: 0.1.2
 Summary: A web scraper that uses Tor for anonymity and supports media extraction
 Home-page: https://github.com/HMCorp-Fund/scrape_simple
 Author: Anton Pavlenko

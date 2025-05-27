@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="scrape_simple",
-    version="0.1.2",
+    version="0.1.3",
     author="Anton Pavlenko",
     author_email="apavlenko@hmcorp.fund",
     description="A web scraper that uses Tor for anonymity and supports media extraction",

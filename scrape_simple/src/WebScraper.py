@@ -1,4 +1,5 @@
 import time
+import random
 import requests # type: ignore
 from urllib.parse import urlparse, urljoin, unquote
 import os.path
@@ -12,11 +13,13 @@ from . import TorManager
 import re
 import os
 import io
+import stem.control
 
 class WebScraper:
     def __init__(self, root_url: str, max_depth: int, use_existing_tor: bool = True, 
                  simplify_ru: bool = False, min_media_size: int = 10240,
-                 ai_describe_media: bool = False, skip_media: bool = False):
+                 ai_describe_media: bool = False, skip_media: bool = False,
+                 max_retries: int = 3):
         self.root_url = root_url
         self.max_depth = max_depth
         self.visited_urls = set()
@@ -43,6 +46,16 @@ class WebScraper:
         self.ai_describe_media = ai_describe_media
         self.image_captioner = None
         self.skip_media = skip_media  # Flag to control media extraction
+        self.max_retries = max_retries  # Number of retries for failed requests
+        
+        # Generate random user agents to rotate
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:94.0) Gecko/20100101 Firefox/94.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:94.0) Gecko/20100101 Firefox/94.0'
+        ]
         
         # Initialize AI image captioner only if needed and media extraction is enabled
         if self.ai_describe_media and not self.skip_media:
@@ -112,13 +125,16 @@ class WebScraper:
     def get_media_file_size(self, url: str) -> int:
         """Get the file size of a media URL in bytes."""
         try:
-            # Use HEAD request to efficiently get content length
-            head = requests.head(url, timeout=10, allow_redirects=True)
+            # Get browser-like headers
+            headers = self.get_request_headers()
+            
+            # Use HEAD request with headers to efficiently get content length
+            head = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
             if head.status_code == 200 and 'content-length' in head.headers:
                 return int(head.headers['content-length'])
             
             # If HEAD request doesn't have content-length, try a small GET request
-            get = requests.get(url, timeout=10, stream=True)
+            get = requests.get(url, headers=headers, timeout=10, stream=True)
             if get.status_code == 200 and 'content-length' in get.headers:
                 return int(get.headers['content-length'])
                 
@@ -460,6 +476,35 @@ class WebScraper:
                 links.append(absolute_url)
         return links
 
+    def get_new_tor_identity(self):
+        """Get a new Tor identity (IP address) by requesting a new circuit."""
+        try:
+            with stem.control.Controller.from_port(port=self.tor_manager.control_port) as controller:
+                controller.authenticate()
+                controller.signal(stem.Signal.NEWNYM)
+                # Wait for the new identity to be established
+                time.sleep(5)
+                print("New Tor identity established")
+                return True
+        except Exception as e:
+            print(f"Error getting new Tor identity: {e}")
+            return False
+    
+    def get_request_headers(self):
+        """Generate browser-like headers for HTTP requests."""
+        user_agent = random.choice(self.user_agents)
+        headers = {
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.google.com/',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0',
+        }
+        return headers
+    
     def crawl(self, url, parent_url="", depth=0):
         """Crawl a URL to given depth and collect content."""
         # Only check if we've visited this URL in *this* run
@@ -470,67 +515,91 @@ class WebScraper:
         self.visited_urls.add(url)
         print(f"Crawling ({depth}/{self.max_depth}): {url}")
         
-        try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            # Process HTML content
-            soup = BeautifulSoup(response.text, 'html.parser')
-            title = soup.title.string if soup.title else ""
-            
-            # Create HTMLPage object
-            html_page = HTMLPage(
-                url=url,
-                title=title,
-                content=response.text,
-                links=self.extract_links(soup, url),
-                parent_url=parent_url
-            )
-            self.site_content.add_html_page(html_page)
-            
-            # Extract media files only if media extraction is not skipped
-            if not self.skip_media:
-                self.extract_media(soup, url)
+        # Add a small random delay to avoid rate limiting
+        time.sleep(random.uniform(1, 3))
         
-            # Extract text content
-            text_content = self.extract_text(soup)
-            if text_content:
-                # Apply Russian simplification if enabled AND the simplifier exists
-                simplified_content = text_content
-                if self.simplify_ru and hasattr(self, 'ru_simplifier') and self.ru_simplifier and self._has_cyrillic(text_content):
-                    try:
-                        original_length = len(text_content)
-                        simplified_content = self.ru_simplifier.simplify_text(text_content)
-                        new_length = len(simplified_content)
-                        
-                        # Check if simplification produced reasonable results
-                        if simplified_content and new_length >= original_length * 0.5:
-                            print(f"Applied Russian text simplification for {url}")
-                        else:
-                            print(f"Russian simplification produced poor results, using original text")
-                            simplified_content = text_content
-                    except Exception as e:
-                        print(f"Error applying Russian text simplification: {e}")
-                        simplified_content = text_content
+        # Implement retry logic with Tor IP rotation
+        for attempt in range(self.max_retries):
+            try:
+                # Get fresh headers for each attempt
+                headers = self.get_request_headers()
                 
-                text_page = TextPage(
+                # Make the request with headers
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                
+                # Process HTML content
+                soup = BeautifulSoup(response.text, 'html.parser')
+                title = soup.title.string if soup.title else ""
+                
+                # Create HTMLPage object
+                html_page = HTMLPage(
                     url=url,
                     title=title,
-                    content=text_content,
-                    simplified_content=simplified_content,
+                    content=response.text,
+                    links=self.extract_links(soup, url),
                     parent_url=parent_url
                 )
-                self.site_content.add_text_page(text_page)
+                self.site_content.add_html_page(html_page)
+                
+                # Extract media files only if media extraction is not skipped
+                if not self.skip_media:
+                    self.extract_media(soup, url)
             
-            # Follow links if we haven't reached max depth
-            if depth < self.max_depth:
-                for link in html_page.links:
-                    if link not in self.visited_urls:  # Only check against current run's visited URLs
-                        time.sleep(1)  # Be nice to the server
-                        self.crawl(link, url, depth + 1)
-        
-        except Exception as e:
-            print(f"Error crawling {url}: {e}")
+                # Extract text content
+                text_content = self.extract_text(soup)
+                if text_content:
+                    # Apply Russian simplification if enabled AND the simplifier exists
+                    simplified_content = text_content
+                    if self.simplify_ru and hasattr(self, 'ru_simplifier') and self.ru_simplifier and self._has_cyrillic(text_content):
+                        try:
+                            original_length = len(text_content)
+                            simplified_content = self.ru_simplifier.simplify_text(text_content)
+                            new_length = len(simplified_content)
+                            
+                            # Check if simplification produced reasonable results
+                            if simplified_content and new_length >= original_length * 0.5:
+                                print(f"Applied Russian text simplification for {url}")
+                            else:
+                                print(f"Russian simplification produced poor results, using original text")
+                                simplified_content = text_content
+                        except Exception as e:
+                            print(f"Error applying Russian text simplification: {e}")
+                            simplified_content = text_content
+                    
+                    text_page = TextPage(
+                        url=url,
+                        title=title,
+                        content=text_content,
+                        simplified_content=simplified_content,
+                        parent_url=parent_url
+                    )
+                    self.site_content.add_text_page(text_page)
+                
+                # Follow links if we haven't reached max depth
+                if depth < self.max_depth:
+                    for link in html_page.links:
+                        if link not in self.visited_urls:  # Only check against current run's visited URLs
+                            time.sleep(1)  # Be nice to the server
+                            self.crawl(link, url, depth + 1)
+                
+                # If we've reached here, the request was successful
+                break
+                
+            except requests.exceptions.HTTPError as e:
+                status_code = e.response.status_code if hasattr(e, 'response') else 0
+                
+                # For 403/429 errors, try rotating IP and retrying
+                if status_code in (403, 429) and attempt < self.max_retries - 1:
+                    print(f"Received {status_code} error. Attempt {attempt+1}/{self.max_retries}, rotating Tor identity...")
+                    self.get_new_tor_identity()
+                    continue
+                print(f"Error crawling {url}: {e}")
+                break
+                
+            except Exception as e:
+                print(f"Error crawling {url}: {e}")
+                break
     
     def start(self):
         """Start the scraping process."""
